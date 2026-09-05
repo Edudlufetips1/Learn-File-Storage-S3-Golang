@@ -10,6 +10,7 @@ import (
 
 	"github.com/bootdotdev/learn-web-security/internal/accounts"
 	"github.com/bootdotdev/learn-web-security/internal/auth/mfa"
+	"github.com/bootdotdev/learn-web-security/internal/auth/passwords"
 	"github.com/bootdotdev/learn-web-security/internal/auth/sessions"
 	"github.com/bootdotdev/learn-web-security/internal/httpx"
 	"github.com/bootdotdev/learn-web-security/internal/logging"
@@ -61,6 +62,11 @@ func (handler *Handler) Page(responseWriter http.ResponseWriter, request *http.R
 	if !ok {
 		return
 	}
+	_ = handler.logger.Event("account_accessed", map[string]any{
+		"userId":    current.User.ID,
+		"email":     current.User.Email,
+		"expiresAt": current.Session.ExpiresAt,
+	})
 	if err := handler.renderPage(responseWriter, http.StatusOK, current, ""); err != nil {
 		handler.internalError(responseWriter, request, err)
 	}
@@ -79,6 +85,26 @@ func (handler *Handler) UpdateEmail(responseWriter http.ResponseWriter, request 
 	email = accounts.NormalizeEmail(email)
 	if email == "" {
 		if err := handler.renderPage(responseWriter, http.StatusBadRequest, current, "Email is required."); err != nil {
+			handler.internalError(responseWriter, request, err)
+		}
+		return
+	}
+	reauthMsg := "Re-enter your current password to change your email."
+	currentPassword, passwordErr := httpx.FormValue(request, "currentPassword")
+	if passwordErr != nil {
+		if renderErr := handler.renderPage(responseWriter, http.StatusForbidden, current, reauthMsg); renderErr != nil {
+			handler.internalError(responseWriter, request, renderErr)
+		}
+		return
+	}
+	if currentPassword == "" {
+		if err := handler.renderPage(responseWriter, http.StatusForbidden, current, reauthMsg); err != nil {
+			handler.internalError(responseWriter, request, err)
+		}
+		return
+	}
+	if !passwords.Verify(currentPassword, current.User.PasswordHash) {
+		if err := handler.renderPage(responseWriter, http.StatusForbidden, current, reauthMsg); err != nil {
 			handler.internalError(responseWriter, request, err)
 		}
 		return
@@ -139,7 +165,7 @@ func (handler *Handler) TOTPPage(responseWriter http.ResponseWriter, request *ht
 
 func (handler *Handler) ConfirmTOTP(responseWriter http.ResponseWriter, request *http.Request) {
 	current, ok := handler.requireRecentAuth(responseWriter, request)
-	if !ok {
+	if !ok || !handler.verifyCSRF(responseWriter, request, current.Session.CSRFToken) {
 		return
 	}
 	secret, qrDataURL, found, err := handler.mfaStore.PendingEnrollment(request.Context(), current.User.ID, current.User.Email)

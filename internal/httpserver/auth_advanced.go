@@ -280,22 +280,20 @@ func (handler *authHandler) RequestPasswordReset(responseWriter http.ResponseWri
 		return
 	}
 	email = accounts.NormalizeEmail(email)
+
 	user, found, err := handler.accounts.FindUserByEmail(request.Context(), email)
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
 		return
 	}
+
 	if !found {
-		handler.logAuthenticationEvent(request, "password_reset_request", map[string]any{
-			"email":         email,
-			"success":       false,
-			"failureReason": "email not found",
-		})
-		if err := handler.renderPasswordResetRequest(responseWriter, http.StatusNotFound, false, "No account exists for that email.", ""); err != nil {
+		if err := handler.renderPasswordResetRequest(responseWriter, http.StatusOK, true, "", ""); err != nil {
 			handler.internalError(responseWriter, request, err)
 		}
 		return
 	}
+
 	resetToken, err := handler.passwordResets.Create(request.Context(), user.ID)
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
@@ -306,14 +304,14 @@ func (handler *authHandler) RequestPasswordReset(responseWriter http.ResponseWri
 	if err == nil && appURL.Hostname() == "localhost" {
 		fmt.Printf("Bear Mail to %s:\nReset your password: %s\n", email, resetLink)
 	}
+
 	handler.logAuthenticationEvent(request, "password_reset_request", map[string]any{
-		"email":      user.Email,
-		"userId":     user.ID,
-		"success":    true,
-		"resetToken": resetToken.Value,
-		"resetLink":  resetLink,
+		"email":   user.Email,
+		"userId":  user.ID,
+		"success": true,
 	})
-	if err := handler.renderPasswordResetRequest(responseWriter, http.StatusOK, true, "", "/password-reset/"+resetToken.Value); err != nil {
+
+	if err := handler.renderPasswordResetRequest(responseWriter, http.StatusOK, true, "", ""); err != nil {
 		handler.internalError(responseWriter, request, err)
 	}
 }
