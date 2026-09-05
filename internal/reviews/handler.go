@@ -101,6 +101,10 @@ func (handler *Handler) Edit(responseWriter http.ResponseWriter, request *http.R
 	if !found {
 		return
 	}
+	if review.UserID != current.User.ID {
+		handler.reviewNotFound(responseWriter)
+		return
+	}
 	if err := handler.renderForm(responseWriter, http.StatusOK, current, review, ""); err != nil {
 		handler.internalError(responseWriter, request, err)
 	}
@@ -113,6 +117,10 @@ func (handler *Handler) Update(responseWriter http.ResponseWriter, request *http
 	}
 	review, found := handler.requireReview(responseWriter, request)
 	if !found {
+		return
+	}
+	if review.UserID != current.User.ID {
+		handler.reviewNotFound(responseWriter)
 		return
 	}
 	ratingValue, ratingErr := httpx.FormValue(request, "rating")
@@ -149,6 +157,10 @@ func (handler *Handler) Delete(responseWriter http.ResponseWriter, request *http
 	}
 	review, found := handler.requireReview(responseWriter, request)
 	if !found {
+		return
+	}
+	if review.UserID != current.User.ID {
+		handler.reviewNotFound(responseWriter)
 		return
 	}
 	if err := handler.store.Delete(request.Context(), review.ID); err != nil {
