@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -96,6 +97,31 @@ func SearchThrottle(_ *templates.Renderer) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return next
 	}
+}
+
+func ValidateSameOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost {
+			next.ServeHTTP(responseWriter, request)
+			return
+		}
+		candidate := request.Header.Get("Origin")
+		if candidate == "" {
+			referer := request.Header.Get("Referer")
+			parsedURL, err := url.Parse(referer)
+			if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+				http.Error(responseWriter, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+				return
+			}
+			candidate = parsedURL.Scheme + "://" + parsedURL.Host
+		}
+		expectedOrigin := "http://localhost:3030"
+		if candidate != expectedOrigin {
+			http.Error(responseWriter, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(responseWriter, request)
+	})
 }
 
 type rateLimitCounter struct {

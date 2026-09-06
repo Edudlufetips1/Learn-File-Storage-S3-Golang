@@ -1,7 +1,6 @@
 package reviews
 
 import (
-	"html"
 	"net/http"
 	"strconv"
 	"strings"
@@ -248,8 +247,7 @@ func parseRating(value string) (int64, bool) {
 }
 
 func parseBody(value string) (string, bool) {
-	sanitized := html.EscapeString(value)
-	trimmed := strings.TrimSpace(sanitized)
+	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return "", false
 	}

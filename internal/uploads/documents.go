@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/bootdotdev/learn-web-security/internal/identifiers"
 )
 
 type Keyring interface {
@@ -20,21 +22,29 @@ type StoredDocument struct {
 }
 
 func StoreDocument(contents []byte, uploadDirectory string, encryptionKeyring Keyring) (StoredDocument, bool, error) {
+	contentType, extension, valid := detectDocumentType(contents)
+	if !valid {
+		return StoredDocument{}, false, nil
+	}
+	identifier, err := identifiers.NewUUID()
+	if err != nil {
+		return StoredDocument{ContentType: contentType, StoragePath: ""}, false, fmt.Errorf("generate identifier: %w", err)
+	}
+	storagePath := filepath.Join(uploadDirectory, identifier+extension)
 	storedContents, encrypted, err := encryptDocument(contents, encryptionKeyring)
 	if err != nil {
-		return StoredDocument{}, false, err
+		return StoredDocument{ContentType: contentType, StoragePath: ""}, false, err
 	}
 	if err := os.MkdirAll(uploadDirectory, 0o755); err != nil {
-		return StoredDocument{}, false, fmt.Errorf("create upload directory: %w", err)
+		return StoredDocument{ContentType: contentType, StoragePath: ""}, false, fmt.Errorf("create upload directory: %w", err)
 	}
-	storagePath := filepath.Join(uploadDirectory, "uploaded-document")
 	if encrypted {
 		storagePath += ".enc"
 	}
 	if err := writeDocument(storagePath, storedContents, encrypted); err != nil {
-		return StoredDocument{}, false, err
+		return StoredDocument{ContentType: contentType, StoragePath: ""}, false, err
 	}
-	return StoredDocument{ContentType: "application/octet-stream", StoragePath: storagePath}, true, nil
+	return StoredDocument{ContentType: contentType, StoragePath: storagePath}, true, nil
 }
 
 func detectDocumentType(contents []byte) (string, string, bool) {
