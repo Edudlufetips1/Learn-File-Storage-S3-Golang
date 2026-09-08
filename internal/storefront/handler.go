@@ -82,7 +82,7 @@ func (handler *Handler) Storefront(responseWriter http.ResponseWriter, request *
 	if !ok {
 		return
 	}
-	products, err := handler.store.ListProducts(request.Context(), handler.maxProductResults)
+	products, err := handler.store.ListActiveProducts(request.Context(), handler.maxProductResults)
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
 		return

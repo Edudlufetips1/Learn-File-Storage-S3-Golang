@@ -8,3 +8,5 @@ data/bulk-tax-documents/
 .env
 .env.local
 .env.*.local
+.env*
+!.env.example
