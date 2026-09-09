@@ -1,0 +1,27 @@
+# Local secrets and version control metadata
+.env*
+.git/
+
+# Temporary files
+tmp/
+*.tmp
+*.temp
+
+# Logs
+*.log
+
+# Generated local databases
+data/*.sqlite*
+
+# Bulk import documents
+data/bulk-tax-documents/
+
+# Runtime/uploaded files
+data/uploads/*
+
+# Build inputs required by the image
+!go.mod
+!go.sum
+!web/
+!attacker-lab/
+!data/uploads/mystery-shack-tax-exemption.pdf
