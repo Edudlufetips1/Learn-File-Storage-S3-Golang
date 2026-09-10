@@ -89,16 +89,48 @@ func recoverPanics(logger *logging.Logger, renderer *templates.Renderer) middlew
 	}
 }
 
-func LoadShedder(_ int, _ int) func(http.Handler) http.Handler {
+func LoadShedder(maxConcurrent int, retryDelay int) func(http.Handler) http.Handler {
+	if maxConcurrent <= 0 {
+		panic("concurrency cap must be positive")
+	}
+	if retryDelay <= 0 {
+		panic("retry delay must be positive")
+	}
+
+	inFlight := make(chan struct{}, maxConcurrent)
+
 	return func(next http.Handler) http.Handler {
-		return next
+		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+			responseWriter.Header().Set("X-In-Flight-Limit", strconv.Itoa(maxConcurrent))
+
+			select {
+			case inFlight <- struct{}{}:
+				defer func() { <-inFlight }()
+			default:
+				responseWriter.Header().Set("Retry-After", strconv.Itoa(retryDelay))
+				httpx.RespondWithJSON(responseWriter, http.StatusServiceUnavailable, map[string]string{"error": "Service is at capacity"})
+				return
+			}
+
+			next.ServeHTTP(responseWriter, request)
+		})
 	}
 }
 
-func SearchThrottle(_ *templates.Renderer) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return next
-	}
+func SearchThrottle(renderer *templates.Renderer) func(http.Handler) http.Handler {
+	return fixedWindowRateLimiter(rateLimitOptions{
+		window:  time.Second,
+		maximum: 5,
+		key: func(_ *http.Request) string {
+			return "global-search-throttle"
+		},
+		onLimit: func(responseWriter http.ResponseWriter, _ *http.Request, _ rateLimitState) {
+			responseWriter.Header().Set("Search Is Busy", "Try again shortly.")
+			if err := httpx.RespondWithErrorPage(responseWriter, renderer, http.StatusTooManyRequests, "Search Is Busy", "Try again shortly."); err != nil {
+				http.Error(responseWriter, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
+		},
+	})
 }
 
 func validateSameOrigin(appOrigin string, renderer *templates.Renderer) middleware {

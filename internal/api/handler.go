@@ -16,6 +16,7 @@ type integrationOrderResponse struct {
 	Status     string `json:"status"`
 	TotalCents int64  `json:"total_cents"`
 	CreatedAt  string `json:"created_at"`
+	Quota      any    `json:"quota"`
 }
 
 type orderItemResponse struct {
@@ -161,19 +162,39 @@ func (handler *Handler) WarehouseOrders(responseWriter http.ResponseWriter, requ
 		httpx.RespondWithJSON(responseWriter, http.StatusForbidden, map[string]string{"error": "Insufficient API key scope"})
 		return
 	}
+
+	quotaResult, err := handler.apiStore.ConsumeQuota(request.Context(), key.ID)
+	if err != nil {
+		handler.internalError(responseWriter, request, err)
+		return
+	}
+
+	SetQuotaHeaders(responseWriter, quotaResult)
+	if !quotaResult.Allowed {
+		RespondWithQuotaExhausted(responseWriter, quotaResult)
+		return
+	}
+
 	orders, err := handler.orderStore.ListAll(request.Context())
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
 		return
 	}
+
 	responses := make([]integrationOrderResponse, 0, len(orders))
 	for _, order := range orders {
 		responses = append(responses, integrationOrderResponse{
-			ID: order.ID, Status: order.Status, TotalCents: order.TotalCents, CreatedAt: order.CreatedAt,
+			ID:         order.ID,
+			Status:     order.Status,
+			TotalCents: order.TotalCents,
+			CreatedAt:  order.CreatedAt,
+			Quota:      ToQuotaResponse(quotaResult),
 		})
 	}
+
 	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{
 		"integration": "Warehouse Fulfillment Integration",
+		"quota":       ToQuotaResponse(quotaResult),
 		"orders":      responses,
 	})
 }

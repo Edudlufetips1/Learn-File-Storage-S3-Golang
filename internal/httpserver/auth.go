@@ -222,14 +222,17 @@ func (handler *authHandler) Signup(responseWriter http.ResponseWriter, request *
 	http.Redirect(responseWriter, request, "/account", http.StatusFound)
 }
 
-func parseForm(_ int64, renderer *templates.Renderer) middleware {
+func parseForm(maxBodyBytes int64, renderer *templates.Renderer) middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+			request.Body = http.MaxBytesReader(responseWriter, request.Body, maxBodyBytes)
 			if err := request.ParseForm(); err != nil {
 				statusCode := http.StatusBadRequest
 				heading := "Invalid Request"
 				message := "The submitted form is invalid."
-				if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+
+				var maxBytesErr *http.MaxBytesError
+				if errors.As(err, &maxBytesErr) {
 					statusCode = http.StatusRequestEntityTooLarge
 					heading = "Content Too Large"
 					message = "The request body is too large."
@@ -243,7 +246,6 @@ func parseForm(_ int64, renderer *templates.Renderer) middleware {
 		})
 	}
 }
-
 func (handler *authHandler) Logout(responseWriter http.ResponseWriter, request *http.Request) {
 	challengeToken := totpLoginChallengeToken(request)
 	if err := handler.mfa.DeleteChallenge(request.Context(), challengeToken); err != nil {
