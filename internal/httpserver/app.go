@@ -50,11 +50,13 @@ type Options struct {
 	FixtureDirectory        string
 	TemplateDirectory       string
 	PublicDirectory         string
+	TrustedProxyHops        int
 }
 
 type Application struct {
-	Handler    http.Handler
-	publicRoot *os.Root
+	Handler          http.Handler
+	publicRoot       *os.Root
+	trustedProxyHops int
 }
 
 func New(database *sql.DB, logger *logging.Logger, options Options) (*Application, error) {
@@ -237,7 +239,11 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 		ValidateSameOrigin,
 		recoverPanics(logger, renderer),
 	)
-	return &Application{Handler: handler, publicRoot: publicRoot}, nil
+	return &Application{
+		Handler:          handler,
+		publicRoot:       publicRoot,
+		trustedProxyHops: options.TrustedProxyHops,
+	}, nil
 }
 
 func (application *Application) Close() error {

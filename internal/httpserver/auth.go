@@ -10,6 +10,7 @@ import (
 	"github.com/bootdotdev/learn-web-security/internal/auth/mfa"
 	"github.com/bootdotdev/learn-web-security/internal/auth/passwordreset"
 	"github.com/bootdotdev/learn-web-security/internal/auth/passwords"
+	"github.com/bootdotdev/learn-web-security/internal/auth/returnto"
 	"github.com/bootdotdev/learn-web-security/internal/auth/sessions"
 	"github.com/bootdotdev/learn-web-security/internal/httpx"
 	"github.com/bootdotdev/learn-web-security/internal/logging"
@@ -47,7 +48,7 @@ func newAuthHandler(accountStore *accounts.Store, mfaStore *mfa.Store, passwordR
 }
 
 func (handler *authHandler) LoginPage(responseWriter http.ResponseWriter, request *http.Request) {
-	returnTo := safeReturnTo(strings.Join(request.URL.Query()["returnTo"], ","))
+	returnTo := safeReturnTo(request.URL.Query().Get("returnTo"))
 	errorMessage := ""
 	if request.URL.Query().Get("verification") == "restart" {
 		errorMessage = "That verification attempt is no longer valid. Log in again."
@@ -68,6 +69,7 @@ func (handler *authHandler) Login(responseWriter http.ResponseWriter, request *h
 		handler.invalidForm(responseWriter)
 		return
 	}
+
 	returnToValue, err := httpx.FormValue(request, "returnTo")
 	if err != nil {
 		handler.invalidForm(responseWriter)
@@ -92,6 +94,16 @@ func (handler *authHandler) Login(responseWriter http.ResponseWriter, request *h
 			handler.internalError(responseWriter, request, err)
 		}
 		return
+	}
+
+	if passwords.NeedsRehash(user.PasswordHash) {
+		if newHash, err := passwords.Hash(password); err == nil {
+			if err := handler.accounts.UpdatePasswordHash(request.Context(), user.ID, newHash); err != nil {
+				handler.internalError(responseWriter, request, err)
+				return
+			}
+			user.PasswordHash = newHash
+		}
 	}
 
 	challengeToken := totpLoginChallengeToken(request)
@@ -259,7 +271,7 @@ func (handler *authHandler) Logout(responseWriter http.ResponseWriter, request *
 
 func (handler *authHandler) renderLogin(responseWriter http.ResponseWriter, statusCode int, errorMessage, returnTo string) error {
 	return handler.renderer.Render(responseWriter, statusCode, "login", authPage{
-		Title:    "Log In",
+		Page:     templates.Page{Title: "Log In"},
 		Error:    errorMessage,
 		ReturnTo: returnTo,
 	})
@@ -267,7 +279,7 @@ func (handler *authHandler) renderLogin(responseWriter http.ResponseWriter, stat
 
 func (handler *authHandler) renderSignup(responseWriter http.ResponseWriter, statusCode int, errorMessage string) error {
 	return handler.renderer.Render(responseWriter, statusCode, "signup", authPage{
-		Title: "Create Account",
+		Page:  templates.Page{Title: "Create Account"},
 		Error: errorMessage,
 	})
 }
@@ -294,10 +306,7 @@ func (handler *authHandler) logAuthenticationEvent(_ *http.Request, eventName st
 }
 
 func safeReturnTo(value string) string {
-	if value == "" {
-		return "/"
-	}
-	return value
+	return returnto.Safe(value)
 }
 
 func nullableUserID(user accounts.User, found bool) any {

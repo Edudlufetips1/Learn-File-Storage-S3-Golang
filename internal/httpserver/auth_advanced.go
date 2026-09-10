@@ -225,6 +225,15 @@ func (handler *authHandler) RecoverMFA(responseWriter http.ResponseWriter, reque
 		}
 		return
 	}
+	if passwords.NeedsRehash(user.PasswordHash) {
+		if newHash, err := passwords.Hash(password); err == nil {
+			if err := handler.accounts.UpdatePasswordHash(request.Context(), user.ID, newHash); err != nil {
+				handler.internalError(responseWriter, request, err)
+				return
+			}
+			user.PasswordHash = newHash
+		}
+	}
 	consumed, err := handler.mfa.ConsumeBackupCode(request.Context(), user.ID, backupCode)
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
@@ -399,17 +408,19 @@ func (handler *authHandler) ResetPassword(responseWriter http.ResponseWriter, re
 
 func (handler *authHandler) renderTOTPLogin(responseWriter http.ResponseWriter, statusCode int, returnTo, errorMessage string) error {
 	return handler.renderer.Render(responseWriter, statusCode, "totp-login", totpLoginPage{
-		Title: "Two-Step Verification", Error: errorMessage, ReturnTo: safeReturnTo(returnTo),
+		Page: templates.Page{Title: "Two-Step Verification"}, Error: errorMessage, ReturnTo: safeReturnTo(returnTo),
 	})
 }
 
 func (handler *authHandler) renderMFARecovery(responseWriter http.ResponseWriter, statusCode int, errorMessage string) error {
-	return handler.renderer.Render(responseWriter, statusCode, "mfa-recovery", recoveryPage{Title: "Use a Backup Code", Error: errorMessage})
+	return handler.renderer.Render(responseWriter, statusCode, "mfa-recovery", recoveryPage{
+		Page: templates.Page{Title: "Use a Backup Code"}, Error: errorMessage,
+	})
 }
 
 func (handler *authHandler) renderPasswordResetRequest(responseWriter http.ResponseWriter, statusCode int, showConfirmation bool, errorMessage, resetLink string) error {
 	return handler.renderer.Render(responseWriter, statusCode, "password-reset-request", passwordResetRequestPage{
-		Title: "Reset Password", Error: errorMessage, ShowConfirmation: showConfirmation, ResetLink: resetLink,
+		Page: templates.Page{Title: "Reset Password"}, Error: errorMessage, ShowConfirmation: showConfirmation, ResetLink: resetLink,
 	})
 }
 
@@ -421,7 +432,7 @@ func (handler *authHandler) renderPasswordReset(responseWriter http.ResponseWrit
 		title = "Password Reset Complete"
 	}
 	return handler.renderer.Render(responseWriter, statusCode, templateName, passwordResetPage{
-		Title: title, Error: errorMessage, Token: token, Email: email,
+		Page: templates.Page{Title: title}, Error: errorMessage, Token: token, Email: email,
 	})
 }
 
