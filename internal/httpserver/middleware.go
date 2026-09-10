@@ -101,29 +101,37 @@ func SearchThrottle(_ *templates.Renderer) func(http.Handler) http.Handler {
 	}
 }
 
-func ValidateSameOrigin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost {
-			next.ServeHTTP(responseWriter, request)
-			return
-		}
-		candidate := request.Header.Get("Origin")
-		if candidate == "" {
-			referer := request.Header.Get("Referer")
-			parsedURL, err := url.Parse(referer)
-			if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-				http.Error(responseWriter, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+func validateSameOrigin(appOrigin string, renderer *templates.Renderer) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+			if request.URL.Path == "/integrations/pawpal/webhook" {
+				next.ServeHTTP(responseWriter, request)
 				return
 			}
-			candidate = parsedURL.Scheme + "://" + parsedURL.Host
-		}
-		expectedOrigin := "http://localhost:3030"
-		if candidate != expectedOrigin {
-			http.Error(responseWriter, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(responseWriter, request)
-	})
+			if request.Method != http.MethodPost {
+				next.ServeHTTP(responseWriter, request)
+				return
+			}
+
+			origin := request.Header.Get("Origin")
+			if origin == appOrigin {
+				next.ServeHTTP(responseWriter, request)
+				return
+			}
+			if origin == "" {
+				referer := request.Header.Get("Referer")
+				parsedReferer, err := url.Parse(referer)
+				if err == nil && referer != "" && parsedReferer.Scheme+"://"+parsedReferer.Host == appOrigin {
+					next.ServeHTTP(responseWriter, request)
+					return
+				}
+			}
+
+			if err := httpx.RespondWithErrorPage(responseWriter, renderer, http.StatusForbidden, "Forbidden", "This request did not come from Bearly Secure."); err != nil {
+				http.Error(responseWriter, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
+		})
+	}
 }
 
 type rateLimitCounter struct {
@@ -232,9 +240,17 @@ func (limiter *fixedWindowLimiter) reject(responseWriter http.ResponseWriter, re
 }
 
 func fixedWindowRateLimiter(options rateLimitOptions) middleware {
-	validateRateLimitOptions(options)
+	limiter := newFixedWindowLimiter(options)
 	return func(next http.Handler) http.Handler {
-		return next
+		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+			state, limited := limiter.consume(request)
+			if limited {
+				limiter.reject(responseWriter, request, state)
+				return
+			}
+			setRateLimitHeaders(responseWriter, state)
+			next.ServeHTTP(responseWriter, request)
+		})
 	}
 }
 

@@ -138,13 +138,25 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 	if err != nil {
 		return nil, err
 	}
+
+	productAPILimiter := fixedWindowRateLimiter(rateLimitOptions{
+		window:  time.Minute,
+		maximum: 30,
+		key:     clientIPKeyWithTrustedProxies(options.TrustedProxyHops),
+		onLimit: func(responseWriter http.ResponseWriter, _ *http.Request, _ rateLimitState) {
+			responseWriter.Header().Set("Access-Control-Allow-Origin", "*")
+			httpx.RespondWithJSON(responseWriter, http.StatusTooManyRequests, map[string]string{
+				"error": "Too many requests",
+			})
+		},
+	})
 	dynamicMux := http.NewServeMux()
 	dynamicMux.HandleFunc("GET /{$}", storefrontHandler.Storefront)
 	dynamicMux.HandleFunc("GET /search", storefrontHandler.Search)
 	dynamicMux.HandleFunc("GET /products/{id}", storefrontHandler.Product)
 	dynamicMux.HandleFunc("GET /api/account/orders", apiHandler.AccountOrders)
 	dynamicMux.HandleFunc("GET /api/orders/{id}", apiHandler.Order)
-	dynamicMux.HandleFunc("GET /api/products", apiHandler.Products)
+	dynamicMux.Handle("GET /api/products", productAPILimiter(http.HandlerFunc(apiHandler.Products)))
 	dynamicMux.HandleFunc("OPTIONS /api/products", apiHandler.OptionsProducts)
 	dynamicMux.HandleFunc("GET /api/integrations/warehouse/orders", apiHandler.WarehouseOrders)
 	dynamicMux.Handle("POST /products/{id}/reviews", parseForm(options.MaxRequestBodyBytes, renderer)(http.HandlerFunc(reviewHandler.Create)))
@@ -213,13 +225,9 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 			http.Error(responseWriter, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		}
 	})
-
 	dynamicHandler := dynamicMux
 
 	mainMux := http.NewServeMux()
-	mainMux.HandleFunc("GET /health", func(responseWriter http.ResponseWriter, _ *http.Request) {
-		httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{"ok": true, "app": "bearly-secure"})
-	})
 	staticHandler := newStaticHandler(publicRoot)
 	mainMux.Handle("GET /reset.css", staticHandler)
 	mainMux.Handle("GET /styles.css", staticHandler)
@@ -231,16 +239,25 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 	mainMux.Handle("GET /product-photos/{filename}", staticHandler)
 	mainMux.HandleFunc("POST /integrations/pawpal/webhook", pawPalHandler.Webhook)
 	mainMux.Handle("/", dynamicHandler)
-
 	handler := applyMiddleware(
 		mainMux,
 		cspNonce,
 		securityHeaders,
-		ValidateSameOrigin,
+		validateSameOrigin(options.AppOrigin, renderer),
 		recoverPanics(logger, renderer),
+		fixedWindowRateLimiter(rateLimitOptions{
+			window:  time.Minute,
+			maximum: 100,
+			key:     clientIPKeyWithTrustedProxies(options.TrustedProxyHops),
+		}),
 	)
+	topMux := http.NewServeMux()
+	topMux.HandleFunc("GET /health", func(responseWriter http.ResponseWriter, _ *http.Request) {
+		httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{"ok": true, "app": "bearly-secure"})
+	})
+	topMux.Handle("/", handler)
 	return &Application{
-		Handler:          handler,
+		Handler:          topMux,
 		publicRoot:       publicRoot,
 		trustedProxyHops: options.TrustedProxyHops,
 	}, nil

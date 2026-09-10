@@ -24,4 +24,3 @@ data/uploads/*
 !go.sum
 !web/
 !attacker-lab/
-!data/uploads/mystery-shack-tax-exemption.pdf
