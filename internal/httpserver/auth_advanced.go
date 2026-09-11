@@ -139,6 +139,8 @@ func (handler *authHandler) TOTPLogin(responseWriter http.ResponseWriter, reques
 			"failureReason": "totp code mismatch",
 			"returnTo":      challenge.ReturnTo,
 		})
+		sourceIP := clientIPKeyWithTrustedProxies(handler.trustedProxyHops)(request)
+		handler.failedLoginTracker.Record(request.Header.Get("X-Request-ID"), sourceIP, user.ID)
 		if exhausted {
 			clearTOTPLoginChallengeCookie(responseWriter)
 			http.Redirect(responseWriter, request, verificationRestartLoginPath(challenge.ReturnTo), http.StatusFound)
@@ -225,6 +227,7 @@ func (handler *authHandler) RecoverMFA(responseWriter http.ResponseWriter, reque
 		}
 		return
 	}
+
 	if passwords.NeedsRehash(user.PasswordHash) {
 		if newHash, err := passwords.Hash(password); err == nil {
 			if err := handler.accounts.UpdatePasswordHash(request.Context(), user.ID, newHash); err != nil {
@@ -297,12 +300,16 @@ func (handler *authHandler) RequestPasswordReset(responseWriter http.ResponseWri
 	}
 
 	if !found {
+		handler.logAuthenticationEvent(request, "password_reset_request", map[string]any{
+			"success": false,
+		})
+		sourceIP := clientIPKeyWithTrustedProxies(handler.trustedProxyHops)(request)
+		handler.passwordResetTracker.Record(request.Header.Get("X-Request-ID"), sourceIP, nil)
 		if err := handler.renderPasswordResetRequest(responseWriter, http.StatusOK, true, "", ""); err != nil {
 			handler.internalError(responseWriter, request, err)
 		}
 		return
 	}
-
 	resetToken, err := handler.passwordResets.Create(request.Context(), user.ID)
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
@@ -319,6 +326,8 @@ func (handler *authHandler) RequestPasswordReset(responseWriter http.ResponseWri
 		"userId":  user.ID,
 		"success": true,
 	})
+	sourceIP := clientIPKeyWithTrustedProxies(handler.trustedProxyHops)(request)
+	handler.passwordResetTracker.Record(request.Header.Get("X-Request-ID"), sourceIP, user.ID)
 
 	if err := handler.renderPasswordResetRequest(responseWriter, http.StatusOK, true, "", ""); err != nil {
 		handler.internalError(responseWriter, request, err)

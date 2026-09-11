@@ -125,7 +125,7 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 		filepath.Join(options.DataDirectory, "bulk-tax-documents"),
 		options.MaxUploadBytes,
 	)
-	authenticationHandler := newAuthHandler(accountStore, mfaStore, passwordResetStore, renderer, logger, options.AppOrigin)
+	authenticationHandler := newAuthHandler(accountStore, mfaStore, passwordResetStore, renderer, logger, options.AppOrigin, options.TrustedProxyHops)
 	passkeyHandler, err := passkeys.NewHandler(
 		options.AppOrigin,
 		accountStore,
@@ -296,6 +296,7 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 	mainMux.Handle("GET /shipping-widget.html", staticHandler)
 	mainMux.Handle("GET /shipping-widget.js", staticHandler)
 	mainMux.Handle("GET /product-photos/{filename}", staticHandler)
+	mainMux.HandleFunc("GET /.well-known/security.txt", securityTxt)
 	mainMux.HandleFunc("POST /integrations/pawpal/webhook", pawPalHandler.Webhook)
 	mainMux.Handle("/", dynamicMux)
 
@@ -318,7 +319,7 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 	})
 	topMux.Handle("/", appHandler)
 	return &Application{
-		Handler:          topMux,
+		Handler:          RequestID(topMux),
 		publicRoot:       publicRoot,
 		trustedProxyHops: options.TrustedProxyHops,
 	}, nil

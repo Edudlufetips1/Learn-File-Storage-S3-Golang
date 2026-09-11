@@ -55,13 +55,13 @@ func (threshold *AuthAlertThreshold) Record(requestID, sourceIP string, userID a
 	threshold.counters[sourceIP] = counter
 	shouldAlert := counter.count == threshold.threshold
 	threshold.mutex.Unlock()
-
 	if shouldAlert {
 		_ = threshold.logger.Event("security_alert", map[string]any{
 			"requestId":     requestID,
 			"outcome":       "threshold_crossed",
 			"signal":        threshold.signal,
 			"severity":      "warning",
+			"exceeded":      counter.count > threshold.threshold,
 			"sourceIp":      sourceIP,
 			"userId":        userID,
 			"threshold":     threshold.threshold,

@@ -4,7 +4,9 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/bootdotdev/learn-web-security/internal/accounts"
 	"github.com/bootdotdev/learn-web-security/internal/auth/mfa"
@@ -12,8 +14,10 @@ import (
 	"github.com/bootdotdev/learn-web-security/internal/auth/passwords"
 	"github.com/bootdotdev/learn-web-security/internal/auth/returnto"
 	"github.com/bootdotdev/learn-web-security/internal/auth/sessions"
+	"github.com/bootdotdev/learn-web-security/internal/botdetection"
 	"github.com/bootdotdev/learn-web-security/internal/httpx"
 	"github.com/bootdotdev/learn-web-security/internal/logging"
+	"github.com/bootdotdev/learn-web-security/internal/observability"
 	"github.com/bootdotdev/learn-web-security/internal/templates"
 )
 
@@ -28,22 +32,28 @@ type authPage struct {
 }
 
 type authHandler struct {
-	accounts       *accounts.Store
-	renderer       *templates.Renderer
-	logger         *logging.Logger
-	mfa            *mfa.Store
-	passwordResets *passwordreset.Store
-	appOrigin      string
+	accounts             *accounts.Store
+	renderer             *templates.Renderer
+	logger               *logging.Logger
+	mfa                  *mfa.Store
+	passwordResets       *passwordreset.Store
+	failedLoginTracker   *observability.AuthAlertThreshold
+	passwordResetTracker *observability.AuthAlertThreshold
+	appOrigin            string
+	trustedProxyHops     int
 }
 
-func newAuthHandler(accountStore *accounts.Store, mfaStore *mfa.Store, passwordResetStore *passwordreset.Store, renderer *templates.Renderer, logger *logging.Logger, appOrigin string) *authHandler {
+func newAuthHandler(accountStore *accounts.Store, mfaStore *mfa.Store, passwordResetStore *passwordreset.Store, renderer *templates.Renderer, logger *logging.Logger, appOrigin string, trustedProxyHops int) *authHandler {
 	return &authHandler{
-		accounts:       accountStore,
-		renderer:       renderer,
-		logger:         logger,
-		mfa:            mfaStore,
-		passwordResets: passwordResetStore,
-		appOrigin:      appOrigin,
+		accounts:             accountStore,
+		renderer:             renderer,
+		logger:               logger,
+		mfa:                  mfaStore,
+		passwordResets:       passwordResetStore,
+		failedLoginTracker:   observability.NewAuthAlertThreshold("failed_logins", 3, 5*time.Minute, logger),
+		passwordResetTracker: observability.NewAuthAlertThreshold("password_reset_requests", 3, 10*time.Minute, logger),
+		appOrigin:            appOrigin,
+		trustedProxyHops:     trustedProxyHops,
 	}
 }
 
@@ -90,6 +100,12 @@ func (handler *authHandler) Login(responseWriter http.ResponseWriter, request *h
 			"failureReason": loginFailureReason(found),
 			"returnTo":      returnTo,
 		})
+		var userID any
+		if found {
+			userID = user.ID
+		}
+		sourceIP := clientIPKeyWithTrustedProxies(handler.trustedProxyHops)(request)
+		handler.failedLoginTracker.Record(request.Header.Get("X-Request-ID"), sourceIP, userID)
 		if err := handler.renderLogin(responseWriter, http.StatusUnauthorized, "Invalid email or password", returnTo); err != nil {
 			handler.internalError(responseWriter, request, err)
 		}
@@ -173,6 +189,9 @@ func (handler *authHandler) Signup(responseWriter http.ResponseWriter, request *
 	password, passwordErr := httpx.FormValue(request, "password")
 	if emailErr != nil || displayNameErr != nil || passwordErr != nil {
 		handler.invalidForm(responseWriter)
+		return
+	}
+	if botdetection.ProtectSignup(responseWriter, request, handler.renderer) {
 		return
 	}
 	email = accounts.NormalizeEmail(email)
@@ -303,8 +322,31 @@ func (handler *authHandler) internalError(responseWriter http.ResponseWriter, re
 	}
 }
 
-func (handler *authHandler) logAuthenticationEvent(_ *http.Request, eventName string, fields map[string]any) {
-	_ = handler.logger.Event(eventName, fields)
+func (handler *authHandler) logAuthenticationEvent(request *http.Request, eventName string, fields map[string]any) {
+	eventsLog := make(map[string]any)
+	for k, v := range fields {
+		eventsLog[k] = v
+	}
+	requestId, ok := request.Context().Value("X-Request-ID").(uuid.UUID)
+	if ok {
+		eventsLog["requestId"] = requestId.String()
+	}
+	sourceIP := clientIPKeyWithTrustedProxies(handler.trustedProxyHops)(request)
+	if sourceIP == "" {
+		sourceIP = "unknown"
+	}
+	eventsLog["sourceIp"] = sourceIP
+
+	userId, _ := eventsLog["userId"]
+	eventsLog["userId"] = userId
+
+	success, _ := fields["success"].(bool)
+	if success {
+		eventsLog["outcome"] = "success"
+	} else {
+		eventsLog["outcome"] = "failure"
+	}
+	_ = handler.logger.Event(eventName, eventsLog)
 }
 
 func safeReturnTo(value string) string {

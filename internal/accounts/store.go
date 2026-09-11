@@ -249,3 +249,11 @@ func HashSessionToken(token string) string {
 func formatTimestamp(timestamp time.Time) string {
 	return timestamp.UTC().Format("2006-01-02T15:04:05.000Z")
 }
+
+func (store *Store) RevokeAllActiveSessions(ctx context.Context) (int, error) {
+	count, err := store.queries.RevokeAllActiveSessions(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("revoke all active sessions: %w", err)
+	}
+	return int(count), nil
+}

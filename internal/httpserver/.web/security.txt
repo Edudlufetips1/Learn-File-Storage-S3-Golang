@@ -1,0 +1,3 @@
+Contact: mailto:security@bearlysecure.example
+Policy: https://bearlysecure.example/security-policy
+Expires: GENERATED RFC 3339 TIMESTAMP

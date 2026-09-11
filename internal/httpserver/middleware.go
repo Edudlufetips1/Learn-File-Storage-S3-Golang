@@ -3,6 +3,7 @@
 package httpserver
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/bootdotdev/learn-web-security/internal/httpx"
 	"github.com/bootdotdev/learn-web-security/internal/logging"
@@ -130,6 +132,16 @@ func SearchThrottle(renderer *templates.Renderer) func(http.Handler) http.Handle
 				http.Error(responseWriter, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			}
 		},
+	})
+}
+func RequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		requestID := uuid.NewV4()
+		requestIDValue := requestID.String()
+		request.Header.Set("X-Request-ID", requestIDValue)
+		responseWriter.Header().Set("X-Request-ID", requestIDValue)
+		ctx := context.WithValue(request.Context(), "X-Request-ID", requestID)
+		next.ServeHTTP(responseWriter, request.WithContext(ctx))
 	})
 }
 
